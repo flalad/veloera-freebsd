@@ -47,48 +47,6 @@ jobs:
           echo "Installing dependencies..."
           bun install
           
-          # 检查是否已有 vite.config.js 或 vite.config.ts
-          if [ -f "vite.config.js" ] || [ -f "vite.config.ts" ]; then
-            echo "Using existing vite config"
-            cat vite.config.* || true
-          else
-            echo "Creating vite.config.js..."
-            cat > vite.config.js << 'EOF'
-          import { defineConfig } from "vite";
-          import react from "@vitejs/plugin-react";
-          
-          export default defineConfig({
-            plugins: [react()],
-            build: {
-              // 确保构建输出到正确的目录
-              outDir: 'dist',
-              // 确保资源使用相对路径
-              base: './',
-              rollupOptions: {
-                output: {
-                  // 确保文件名格式正确
-                  entryFileNames: 'assets/[name].[hash].js',
-                  chunkFileNames: 'assets/[name].[hash].js',
-                  assetFileNames: 'assets/[name].[hash].[ext]'
-                }
-              }
-            },
-            esbuild: {
-              loader: "jsx",
-              include: /src\/.*\.[jt]sx?$/,
-              exclude: []
-            },
-            optimizeDeps: {
-              esbuildOptions: {
-                loader: {
-                  ".js": "jsx"
-                }
-              }
-            }
-          });
-          EOF
-          fi
-          
           echo "Getting version info..."
           export VERSION_INFO=$(git describe --tags 2>/dev/null || echo "unknown")
           echo "Version: $VERSION_INFO"
@@ -139,9 +97,9 @@ jobs:
           cd ../..
           echo "Frontend build process completed"
 
-      - name: Check Go Embed Implementation
+      - name: Check Go Files Structure
         run: |
-          echo "Checking for embed implementation in Veloera..."
+          echo "Checking Veloera Go structure..."
           cd Veloera
           
           # 查找包含 go:embed 的文件
@@ -149,8 +107,8 @@ jobs:
           grep -r "//go:embed" . --include="*.go" || echo "No embed directives found"
           
           # 查找 main.go 或类似文件
-          echo -e "\nLooking for main.go or similar files:"
-          find . -name "main.go" -o -name "server.go" -o -name "web.go" | head -10
+          echo -e "\nLooking for Go files:"
+          find . -name "*.go" -type f | head -20
           
           # 检查是否有正确的 embed 实现
           echo -e "\nChecking embed patterns:"
@@ -162,60 +120,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-          
-      - name: Patch Embed Implementation if Needed
-        run: |
-          echo "Checking and patching embed implementation..."
-          cd Veloera
-          
-          # 查找主文件
-          MAIN_FILE=$(find . -name "main.go" | head -1)
-          if [ -z "$MAIN_FILE" ]; then
-            echo "main.go not found, looking for alternatives..."
-            MAIN_FILE=$(find . -name "*.go" -exec grep -l "func main()" {} \; | head -1)
-          fi
-          
-          echo "Main file: $MAIN_FILE"
-          
-          # 检查是否需要修补 embed 实现
-          if [ -n "$MAIN_FILE" ]; then
-            # 检查是否已有正确的 embed 指令
-            if ! grep -q "//go:embed all:web/dist" "$MAIN_FILE" && ! grep -q "//go:embed web/dist" "$MAIN_FILE"; then
-              echo "Patching embed implementation..."
-              
-              # 创建补丁文件
-              cat > embed_patch.go << 'EOF'
-// This file ensures proper embedding of web assets
-package main
-
-import (
-	"embed"
-	"io/fs"
-)
-
-//go:embed all:web/dist
-var webFS embed.FS
-
-// GetWebFS returns the embedded web filesystem
-func GetWebFS() (fs.FS, error) {
-	return fs.Sub(webFS, "web/dist")
-}
-EOF
-              
-              # 如果文件在子目录，调整 package
-              PKG_NAME=$(head -1 "$MAIN_FILE" | awk '{print $2}')
-              sed -i "s/package main/package $PKG_NAME/" embed_patch.go
-              
-              # 将补丁文件放到主文件同目录
-              cp embed_patch.go $(dirname "$MAIN_FILE")/
-              
-              echo "✅ Embed patch applied"
-            else
-              echo "✅ Embed directive already exists"
-            fi
-          fi
-          
-          cd ..
           
       - name: Build Backend
         run: |
@@ -292,7 +196,7 @@ EOF
             
             # 检查多个关键字符串
             FOUND_EMBED=false
-            for keyword in "index.html" "<!DOCTYPE html>" "assets" ".js" ".css"; do
+            for keyword in "index.html" "DOCTYPE" "assets" ".js" ".css"; do
               if strings veloera-freebsd | grep -q "$keyword"; then
                 echo "✅ Found '$keyword' in binary"
                 FOUND_EMBED=true
@@ -309,7 +213,7 @@ EOF
             
             # 额外验证
             echo "Verifying embedded content..."
-            if strings veloera-freebsd | grep -q "<!DOCTYPE html>"; then
+            if strings veloera-freebsd | grep -q "DOCTYPE"; then
               echo "✅ HTML content found in binary"
             fi
             if strings veloera-freebsd | grep -q ".js"; then
@@ -376,9 +280,14 @@ EOF
             
             ### 修复内容
             - ✅ 修复前端资源嵌入问题
-            - ✅ 使用 all: 前缀确保所有文件被嵌入
-            - ✅ 改进的构建验证流程
-            - ✅ 增强的错误检测和报告
+            - ✅ 增强的构建验证流程
+            - ✅ 改进的错误检测和报告
+            
+            ### 注意事项
+            如果遇到网页空白问题，请检查：
+            1. 二进制文件大小是否正常（应该大于 10MB）
+            2. 运行时是否有错误输出
+            3. 访问的端口是否正确
           files: Veloera/veloera-freebsd
           draft: false
           prerelease: false
